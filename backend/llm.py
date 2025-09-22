@@ -1,6 +1,10 @@
-import os, json, re
+import os, json, re, logging
 from anthropic import Anthropic
 from .settings import ANTHROPIC_API_KEY, MODEL_NAME
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -56,7 +60,23 @@ def extract_json_from_response(content: str) -> str:
     return content
 
 def chat(model: str, messages: list, max_tokens: int = 1400) -> tuple[str, dict]:
-    """Chat with Claude and return response with metadata"""
+    """Enhanced chat function with comprehensive logging"""
+    
+    logger.info("🤖 LLM CHAT REQUEST")
+    logger.info("=" * 50)
+    logger.info(f"📱 Model: {model}")
+    logger.info(f"🔤 Max Tokens: {max_tokens}")
+    logger.info("")
+    
+    # Log the conversation
+    for i, message in enumerate(messages):
+        role = message.get("role", "unknown")
+        content = message.get("content", "")
+        logger.info(f"💬 Message {i+1} ({role}):")
+        logger.info("-" * 30)
+        logger.info(content[:300] + "..." if len(content) > 300 else content)
+        logger.info("")
+    
     try:
         response = client.messages.create(
             model=model,
@@ -67,18 +87,30 @@ def chat(model: str, messages: list, max_tokens: int = 1400) -> tuple[str, dict]
         content = response.content[0].text
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
-        
-        cost = (input_tokens * 0.00025 + output_tokens * 0.00125) / 1000
+        cost = estimate_cost(input_tokens, output_tokens)
         
         metadata = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "cost": cost
+            "cost": cost,
+            "model": model
         }
+        
+        logger.info("🤖 LLM RESPONSE")
+        logger.info("-" * 30)
+        logger.info(f"💰 Cost: ${cost:.4f}")
+        logger.info(f"🔤 Input Tokens: {input_tokens}")
+        logger.info(f"🔤 Output Tokens: {output_tokens}")
+        logger.info("")
+        logger.info("📄 Response Content:")
+        logger.info(content[:300] + "..." if len(content) > 300 else content)
+        logger.info("")
+        logger.info("=" * 50)
         
         return content, metadata
         
     except Exception as e:
+        logger.error(f"❌ Claude API error: {e}")
         raise Exception(f"Claude API error: {e}")
 
 def complete_json(
@@ -89,9 +121,33 @@ def complete_json(
     max_tokens: int = 1400,
     max_retries: int = 3
 ) -> tuple[dict, dict]:
-    """Get structured JSON response from Claude with enhanced error handling"""
+    """Enhanced complete_json with comprehensive logging"""
+    
+    logger.info("🔧 JSON COMPLETION REQUEST")
+    logger.info("=" * 60)
+    logger.info(f"📱 Model: {model}")
+    logger.info(f"🔄 Max Retries: {max_retries}")
+    logger.info("")
+    
+    logger.info("📋 SYSTEM PROMPT:")
+    logger.info("-" * 30)
+    logger.info(system[:400] + "..." if len(system) > 400 else system)
+    logger.info("")
+    
+    logger.info("👤 USER PROMPT:")
+    logger.info("-" * 30)
+    logger.info(user[:400] + "..." if len(user) > 400 else user)
+    logger.info("")
+    
+    logger.info("📐 SCHEMA HINT:")
+    logger.info("-" * 30)
+    logger.info(schema_hint[:200] + "..." if len(schema_hint) > 200 else schema_hint)
+    logger.info("")
     
     for attempt in range(max_retries):
+        logger.info(f"🔄 JSON Parsing Attempt {attempt + 1}/{max_retries}")
+        logger.info("-" * 40)
+        
         try:
             prompt = f"""{system}
 
@@ -122,8 +178,9 @@ CRITICAL JSON REQUIREMENTS:
             try:
                 cleaned_content = clean_json_response(content)
                 parsed_json = json.loads(cleaned_content)
-            except json.JSONDecodeError:
-                pass
+                logger.info("✅ JSON parsing successful (Strategy 1: Direct)")
+            except json.JSONDecodeError as e:
+                logger.info(f"❌ Strategy 1 failed: {e}")
             
             # Strategy 2: Extract and parse
             if parsed_json is None:
@@ -131,8 +188,9 @@ CRITICAL JSON REQUIREMENTS:
                     json_str = extract_json_from_response(content)
                     cleaned_content = clean_json_response(json_str)
                     parsed_json = json.loads(cleaned_content)
-                except json.JSONDecodeError:
-                    pass
+                    logger.info("✅ JSON parsing successful (Strategy 2: Extract)")
+                except json.JSONDecodeError as e:
+                    logger.info(f"❌ Strategy 2 failed: {e}")
             
             # Strategy 3: Manual JSON construction for common patterns
             if parsed_json is None:
@@ -147,8 +205,9 @@ CRITICAL JSON REQUIREMENTS:
                             "content": content_match.group(1),
                             "chapter_number": int(chapter_match.group(1)) if chapter_match else 1
                         }
-                except:
-                    pass
+                        logger.info("✅ JSON parsing successful (Strategy 3: Manual construction)")
+                except Exception as e:
+                    logger.info(f"❌ Strategy 3 failed: {e}")
             
             if parsed_json is not None:
                 # Restore backslashes in content fields for proper LaTeX rendering
@@ -157,14 +216,22 @@ CRITICAL JSON REQUIREMENTS:
                         if isinstance(value, str) and ('content' in key.lower() or 'text' in key.lower()):
                             parsed_json[key] = restore_latex_backslashes(value)
                 
+                logger.info("🎉 JSON COMPLETION SUCCESSFUL")
+                logger.info("=" * 60)
+                logger.info("📄 Parsed JSON:")
+                logger.info(json.dumps(parsed_json, indent=2)[:500] + "..." if len(str(parsed_json)) > 500 else json.dumps(parsed_json, indent=2))
+                logger.info("")
+                logger.info("=" * 60)
+                
                 return parsed_json, metadata
             
-            raise ValueError(f"All JSON parsing strategies failed on attempt {attempt + 1}")
+            logger.warning(f"⚠️ All JSON parsing strategies failed on attempt {attempt + 1}")
             
         except Exception as e:
+            logger.error(f"❌ JSON completion attempt {attempt + 1} failed: {e}")
             if attempt == max_retries - 1:
                 # Final attempt failed, return fallback JSON
-                print(f"Warning: JSON parsing failed after {max_retries} attempts: {e}")
+                logger.error(f"💥 JSON parsing failed after {max_retries} attempts: {e}")
                 fallback_json = {
                     "title": "Chapter Content",
                     "content": f"# Chapter Content\n\nThis chapter could not be generated due to a technical error.\n\nError: {str(e)[:200]}...\n\n## Summary\n\nThis section requires manual review and completion.\n\n## Key Takeaways\n\n- Technical error encountered during generation\n- Manual review required\n- Content needs to be completed manually",
@@ -172,7 +239,6 @@ CRITICAL JSON REQUIREMENTS:
                 }
                 return fallback_json, metadata
             else:
-                print(f"JSON parsing attempt {attempt + 1} failed: {e}")
                 continue
     
     return {"error": "JSON parsing failed"}, {"error": True}
