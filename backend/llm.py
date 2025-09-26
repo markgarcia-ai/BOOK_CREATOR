@@ -78,11 +78,30 @@ def chat(model: str, messages: list, max_tokens: int = 1400) -> tuple[str, dict]
         logger.info("")
     
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=messages
-        )
+        # Separate system message from user messages for Anthropic API
+        system_message = None
+        user_messages = []
+        
+        for message in messages:
+            if message.get("role") == "system":
+                system_message = message.get("content", "")
+            else:
+                user_messages.append(message)
+        
+        # Create API call with system parameter if system message exists
+        if system_message:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_message,
+                messages=user_messages
+            )
+        else:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=user_messages
+            )
         
         content = response.content[0].text
         input_tokens = response.usage.input_tokens

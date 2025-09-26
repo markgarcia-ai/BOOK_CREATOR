@@ -6,8 +6,13 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
 import os
+import sys
 from pathlib import Path
 from typing import Optional
+
+# Add backend to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from backend.book_types import BOOK_TYPES, calculate_cost_estimate, get_book_recommendations
 
 app = typer.Typer(help="Book Creator Unified CLI")
 console = Console()
@@ -270,15 +275,85 @@ def agent(
 @app.command()
 def simple(
     topic: str = typer.Argument(..., help="Book topic"),
+    book_type: Optional[str] = typer.Option(None, "--book-type", help="Book type (quick_guide, tutorial, comprehensive, textbook, handbook, manual, workbook, research)"),
     chapters: int = typer.Option(8, "--chapters", help="Number of chapters"),
-    words_per_chapter: int = typer.Option(2000, "--words-per-chapter", help="Words per chapter")
+    words_per_chapter: int = typer.Option(2000, "--words-per-chapter", help="Words per chapter"),
+    source_file: Optional[str] = typer.Option(None, "--source-file", help="Source file from uploads folder (e.g., 'ai_foundations.md')")
 ):
-    """Run simple book generation workflow"""
+    """Run simple book generation workflow with book type selection"""
+    
+    # Validate and apply book type if provided
+    selected_book_type = None
+    if book_type:
+        if book_type not in BOOK_TYPES:
+            print(f"[red]❌ Invalid book type: {book_type}[/red]")
+            print(f"[yellow]Available types: {', '.join(BOOK_TYPES.keys())}[/yellow]")
+            return
+        
+        selected_book_type = BOOK_TYPES[book_type]
+        print(f"[green]📚 Using book type: {selected_book_type.name}[/green]")
+        print(f"[cyan]🎯 Target audience: {selected_book_type.target_audience}[/cyan]")
+        print(f"[cyan]✍️  Writing style: {selected_book_type.writing_style}[/cyan]")
+        
+        # Apply book type defaults if user didn't override them
+        if chapters == 8:  # Default value, user didn't specify
+            chapters = selected_book_type.recommended_chapters
+            print(f"[dim]📄 Using book type default chapters: {chapters}[/dim]")
+        
+        if words_per_chapter == 2000:  # Default value, user didn't specify
+            words_per_chapter = selected_book_type.words_per_chapter
+            print(f"[dim]📊 Using book type default words per chapter: {words_per_chapter:,}[/dim]")
+    else:
+        print("[yellow]💡 Tip: Use --book-type to generate content optimized for specific book types[/yellow]")
+        print(f"[yellow]   Available: {', '.join(BOOK_TYPES.keys())}[/yellow]")
+    
+    # Check if source file exists and read it
+    source_content = None
+    if source_file:
+        uploads_dir = Path("uploads")
+        source_path = uploads_dir / source_file
+        
+        if source_path.exists():
+            try:
+                source_content = source_path.read_text(encoding='utf-8')
+                print(f"[green]✓ Found source file: {source_file}[/green]")
+                print(f"[cyan]📄 Content size: {len(source_content):,} characters[/cyan]")
+            except Exception as e:
+                print(f"[red]❌ Error reading source file: {e}[/red]")
+                return
+        else:
+            print(f"[red]❌ Source file not found: {source_path}[/red]")
+            print(f"[yellow]Available files in uploads:[/yellow]")
+            if uploads_dir.exists():
+                for file in uploads_dir.glob("*"):
+                    if file.is_file():
+                        print(f"  - {file.name}")
+            else:
+                print("  [dim]No uploads directory found[/dim]")
+            return
+    
     request_data = {
         "topic": topic,
         "chapters": chapters,
         "words_per_chapter": words_per_chapter
     }
+    
+    # Add book type information if provided
+    if selected_book_type:
+        request_data["book_type"] = book_type
+        request_data["book_type_info"] = {
+            "name": selected_book_type.name,
+            "target_audience": selected_book_type.target_audience,
+            "writing_style": selected_book_type.writing_style,
+            "content_approach": selected_book_type.content_approach,
+            "tone_description": selected_book_type.tone_description,
+            "section_emphasis": selected_book_type.section_emphasis,
+            "prompt_modifiers": selected_book_type.prompt_modifiers
+        }
+    
+    # Add source content if provided
+    if source_content:
+        request_data["source_content"] = source_content
     
     try:
         with Progress(
@@ -413,6 +488,174 @@ def rag_clear():
             
     except requests.exceptions.RequestException as e:
         print(f"[red]✗ RAG clear failed: {e}[/]")
+
+@app.command()
+def books(
+    filter_by: Optional[str] = typer.Option(None, "--filter", help="Filter by audience (beginners, intermediate, advanced, professionals)"),
+    max_cost: Optional[float] = typer.Option(None, "--max-cost", help="Maximum cost in USD"),
+    max_pages: Optional[int] = typer.Option(None, "--max-pages", help="Maximum pages"),
+    custom: Optional[bool] = typer.Option(False, "--custom", help="Calculate cost for custom book"),
+    wide: Optional[bool] = typer.Option(False, "--wide", help="Use wide table format for large terminals")
+):
+    """
+    📚 Show available book types, specifications, and cost estimates
+    """
+    console.print("\n[bold blue]📚 Book Creator - Available Book Types[/bold blue]\n")
+    
+    # Get terminal width
+    terminal_width = console.size.width
+    is_wide_terminal = terminal_width >= 120 or wide
+    
+    if custom:
+        # Interactive custom book calculator
+        console.print("[bold yellow]Custom Book Calculator[/bold yellow]\n")
+        
+        chapters = typer.prompt("Number of chapters", type=int, default=5)
+        words_per_chapter = typer.prompt("Words per chapter", type=int, default=1500)
+        use_rag = typer.confirm("Use RAG enhancement?", default=False)
+        
+        estimate = calculate_cost_estimate(chapters, words_per_chapter, use_rag)
+        
+        # Custom book table
+        custom_table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
+        custom_table.add_column("Specification", style="cyan")
+        custom_table.add_column("Value", style="green")
+        
+        custom_table.add_row("Chapters", str(chapters))
+        custom_table.add_row("Words per Chapter", f"{words_per_chapter:,}")
+        custom_table.add_row("Total Words", f"{estimate['total_words']:,}")
+        custom_table.add_row("Estimated Tokens", f"{estimate['estimated_tokens']:,}")
+        custom_table.add_row("Estimated Pages", str(estimate['estimated_pages']))
+        custom_table.add_row("[bold]Estimated Time[/bold]", f"[bold orange3]{estimate['estimated_time_formatted']}[/bold orange3]")
+        custom_table.add_row("RAG Enhancement", "Yes" if use_rag else "No")
+        custom_table.add_row("[bold]Estimated Cost[/bold]", f"[bold green]${estimate['estimated_cost_usd']:.3f}[/bold green]")
+        
+        console.print(custom_table)
+        console.print("\n[dim]💡 Tip: Use --filter, --max-cost, or --max-pages to find suitable predefined book types[/dim]")
+        return
+    
+    # Create main book types table with responsive widths
+    console.print(f"[dim]Terminal width: {terminal_width} columns[/dim]")
+    
+    if is_wide_terminal:
+        # Wide format for large terminals
+        table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED, expand=True)
+        table.add_column("Book Type", style="cyan", width=22)
+        table.add_column("Description", style="white", width=40)
+        table.add_column("Chapters", justify="center", style="yellow", width=8)
+        table.add_column("Words/Ch", justify="center", style="blue", width=10)
+        table.add_column("Pages", justify="center", style="green", width=6)
+        table.add_column("Time", justify="center", style="orange3", width=8)
+        table.add_column("Audience", style="magenta", width=15)
+        table.add_column("Cost", justify="right", style="bold green", width=10)
+    else:
+        # Compact format for smaller terminals
+        table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE, expand=True)
+        table.add_column("Type", style="cyan", width=14)
+        table.add_column("Description", style="white", no_wrap=False)
+        table.add_column("Ch", justify="center", style="yellow", width=3)
+        table.add_column("Words", justify="center", style="blue", width=6)
+        table.add_column("Pages", justify="center", style="green", width=5)
+        table.add_column("Time", justify="center", style="orange3", width=6)
+        table.add_column("Cost", justify="right", style="bold green", width=7)
+    
+    # Filter books if needed
+    filtered_books = {}
+    for key, book_type in BOOK_TYPES.items():
+        # Apply filters
+        if filter_by:
+            audience_lower = book_type.target_audience.lower()
+            if filter_by.lower() not in audience_lower:
+                continue
+        
+        if max_cost and book_type.estimated_cost_usd > max_cost:
+            continue
+            
+        if max_pages and book_type.estimated_pages > max_pages:
+            continue
+            
+        filtered_books[key] = book_type
+    
+    # Add rows to table based on format
+    for key, book_type in filtered_books.items():
+        if is_wide_terminal:
+            # Wide format with all columns
+            table.add_row(
+                book_type.name,
+                book_type.description,
+                str(book_type.recommended_chapters),
+                f"{book_type.words_per_chapter:,}",
+                str(book_type.estimated_pages),
+                book_type.estimated_time_formatted,
+                book_type.target_audience,
+                f"${book_type.estimated_cost_usd:.3f}"
+            )
+        else:
+            # Compact format with essential columns only
+            # Truncate description for smaller terminals
+            short_desc = book_type.description
+            if len(short_desc) > 30:
+                short_desc = short_desc[:27] + "..."
+            
+            table.add_row(
+                book_type.name,
+                short_desc,
+                str(book_type.recommended_chapters),
+                f"{book_type.words_per_chapter//1000}k" if book_type.words_per_chapter >= 1000 else str(book_type.words_per_chapter),
+                str(book_type.estimated_pages),
+                book_type.estimated_time_formatted,
+                f"${book_type.estimated_cost_usd:.2f}"
+            )
+    
+    console.print(table)
+    
+    # Show format tip for narrow terminals
+    if not is_wide_terminal:
+        console.print(f"\n[dim]💡 Terminal is {terminal_width} columns wide. Use --wide for full table or resize terminal for better view.[/dim]")
+    
+    # Show usage examples
+    console.print("\n[bold yellow]📖 Usage Examples:[/bold yellow]")
+    usage_table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE)
+    usage_table.add_column("Command", style="green")
+    usage_table.add_column("Description", style="white")
+    
+    usage_table.add_row(
+        "python scripts/cli.py simple 'AI Guide' --book-type tutorial",
+        "Create a tutorial-style book with optimized content"
+    )
+    usage_table.add_row(
+        "python scripts/cli.py simple 'ML Handbook' --book-type handbook",
+        "Create a professional handbook with best practices"
+    )
+    usage_table.add_row(
+        "python scripts/cli.py simple 'Research Study' --book-type research",
+        "Generate academic research compendium"
+    )
+    usage_table.add_row(
+        "python scripts/cli.py books --filter beginners --max-cost 0.10",
+        "Find beginner books under $0.10"
+    )
+    usage_table.add_row(
+        "python scripts/cli.py books --custom",
+        "Calculate cost for custom specifications"
+    )
+    
+    console.print(usage_table)
+    
+    # Show cost and time breakdown info
+    console.print(f"\n[bold blue]💰 Cost & Time Information:[/bold blue]")
+    console.print("• Costs include content generation, enhancement, and restructuring")
+    console.print("• Time estimates include content generation + processing overhead")
+    console.print("• RAG enhancement adds ~30% to cost and ~40% to time")
+    console.print("• Estimates based on current Claude API rates and system performance")
+    console.print("• Actual costs and times may vary based on content complexity")
+    
+    if filtered_books:
+        console.print(f"\n[green]✨ Showing {len(filtered_books)} book type(s)[/green]")
+        if len(filtered_books) != len(BOOK_TYPES):
+            console.print(f"[dim]({len(BOOK_TYPES) - len(filtered_books)} filtered out)[/dim]")
+    else:
+        console.print("\n[yellow]⚠️ No book types match your filters[/yellow]")
 
 if __name__ == "__main__":
     app() 

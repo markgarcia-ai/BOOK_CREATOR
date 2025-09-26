@@ -33,5 +33,5 @@ for path in [BOOK, CHAPTERS, ASSETS, EXPORTS, DATA, LOGS]:
     path.mkdir(parents=True, exist_ok=True)
 
 # Cost tracking (rough estimates for Claude)
-COST_PER_INPUT_TOKEN = 0.003 / 1000  # $0.003 per 1K input tokens
-COST_PER_OUTPUT_TOKEN = 0.015 / 1000  # $0.015 per 1K output tokens
+COST_PER_INPUT_TOKEN = 0.03 / 1000  # $0.03 per 1K input tokens (10x increase)
+COST_PER_OUTPUT_TOKEN = 0.15 / 1000  # $0.15 per 1K output tokens (10x increase)

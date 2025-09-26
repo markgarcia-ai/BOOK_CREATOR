@@ -8,6 +8,10 @@ import os
 import sys
 import uvicorn
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add backend to path
 sys.path.append(str(Path(__file__).parent))
